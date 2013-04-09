@@ -55,7 +55,7 @@ jsCanvas.test = function () {
     // now render it. for completion, we eval it and execute it just to test.
     // normally, you'd probably do something like POST the generated javascript
     // code to a web site so that it could be used on other pages
-    xcanvas.render (svg, function () {
+    xcanvas.compile (svg, function () {
 			eval (xcanvas.toString ());
 			// instantiate the compiled object and give it the context
 			// of the displayed canvas it should render into
@@ -105,7 +105,7 @@ jsCanvas.test = function () {
 <img id="pattern" src=http://mtcc.com/site/imgs/davidmatblack.png style="display:none">
 <!-- Created: Tue Apr  9 08:38:52 PDT 2013 -->
 <!-- hhmts start -->
-Last modified: Tue Apr  9 10:38:24 PDT 2013
+Last modified: Tue Apr  9 12:43:52 PDT 2013
 <!-- hhmts end -->
   </body>
 </html>

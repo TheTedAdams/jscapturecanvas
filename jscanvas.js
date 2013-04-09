@@ -64,7 +64,7 @@ function jsCanvas (objectname, width, height) {
 //                in nature because of the need to load images, etc
 //  [opts]:       opts to supply to canvg if you want to override the defaults here.
 
-jsCanvas.prototype.render = function (svg, oncomplete, opts) {
+jsCanvas.prototype.compile = function (svg, oncomplete, opts) {
     var state = this;
     if (! opts) {
 	opts = {ignoreDimensions:false, ignoreClear:false, ignoreMouse:true};
