@@ -67,7 +67,7 @@ function jsCanvas (objectname, width, height) {
 jsCanvas.prototype.compile = function (svg, oncomplete, opts) {
     var state = this;
     if (! opts) {
-	opts = {ignoreDimensions:false, ignoreClear:false, ignoreMouse:true};
+	opts = {ignoreDimensions:false, ignoreClear:true, ignoreMouse:true};
 	if (this.canvas.width) {
 	    opts.scaleWidth = this.canvas.width;
 	    opts.ignoreDimensions = true;
@@ -144,10 +144,13 @@ textBaseline: "alphabetic"
     this.finished = false;
     this.fn = objectname;
     this.output = '';
-    this.output += 'window.'+this.fn+'= function (ctx) { this.ctx = ctx; };\n';
+    this.output += 'window.'+this.fn+'= function (ctx) { this.ctx = ctx; this.gradients = [];};\n';
     this.output += 'window.'+this.fn+'.prototype.setter = function (ctx, key, val) { ctx [key] = val; };\n';
     this.output += 'window.'+this.fn+'.prototype.render = function (ctx) { if (! ctx) ctx = this.ctx; \n';
-    this.outputlast = '';
+    this.outputimages = 'window.'+this.fn+'.imgs = [];\n';
+    this.outputimages += 'window.'+this.fn+'.loadImages = function () { \n';
+    this.ngradients = 0;
+    this.nimages = 0;
 }
 
 jsContext2d.prototype.done = function () {
@@ -156,7 +159,15 @@ jsContext2d.prototype.done = function () {
 	this.output += '};\n';
 	this.output += "window."+this.fn+".prototype.inheight = "+this.canvas.height+";\n";
 	this.output += "window."+this.fn+".prototype.inwidth = "+this.canvas.width+";\n",
-	this.output += this.outputlast;
+	this.outputimages += '};\n';
+	this.output += this.outputimages;
+	this.output += 'window.'+this.fn+'.imagesLoaded = function () {\n';
+	this.output += 'for (var i in window.'+this.fn+'.imgs) { if (window.'+this.fn+'.imgs [i].complete == false) return false; }\n';
+	this.output += ' return true; };\n';	
+	// NB: we preload all of the images at js load time so that it's likely that
+	//     they'll all be loaded at object instantiation time. since they're data: 
+	//     that should be a decent assumption, but if not it'll need async bizness.
+	this.output += 'window.'+this.fn+'.loadImages ();';
     }
 };
 
@@ -179,7 +190,12 @@ jsContext2d.prototype.checkFields = function () {
 		this.output += 'this.setter (ctx, "'+ this.slashify (i) + '", "'+this.slashify (this [i]) +'");\n';
 		break;
 	    default:
-		console.log (i+": don't know how to handle "+(typeof (this [i]))+ " "+this[i]);
+		if (this [i].jscGradient) {
+		    // found a gradient or pattern
+		    this.output += 'this.setter (ctx, "'+ this.slashify (i) + '", this.gradients ['+(this[i].jscGradient-1)+']);\n';		    
+		} else
+		    console.log (i+": don't know how to handle field "+(typeof (this [i]))+ " "+this[i]);
+	xobj = this [i];
 		break;
 	    }
 	    this.lastFields [i] = this [i];
@@ -218,7 +234,7 @@ jsContext2d.prototype.getBase64Image = function (img) {
     return dataURL;
 };
 
-jsContext2d.prototype.emitFunc = function (fn, args) {
+jsContext2d.prototype.emitFunc = function (fn, args, fnprefix) {
     this.checkFields ();	
     argstr = '';
     beforestr = '';
@@ -235,14 +251,14 @@ jsContext2d.prototype.emitFunc = function (fn, args) {
 	default:
 	    if (arg.tagName == 'IMG') {		// should prolly check to see if it's a DOM object too.
 		var data = this.getBase64Image (arg);
-		beforestr += 'var img'+nobj+' = new Image (); img'+nobj+'.src="' + this.slashify (data) +'"' + ';\n';
-		argstr += 'img'+nobj+',';
-		nobj++;
+		this.outputimages += 'window.'+this.fn+'.imgs['+this.nimages+'] = new Image ();\nwindow.'+this.fn+'.imgs['+this.nimages+'].src="' + this.slashify (data) +'"' + ';\n';
+		argstr += 'window.'+this.fn+'.imgs['+this.nimages+'],';
+		this.nimages++;
 	    } else if (arg.tagName == 'CANVAS') {
 		var data = arg.toDataURL("image/png");
-		beforestr += 'var img'+nobj+' = new Image (); img'+nobj+'.src="' + this.slashify (data) +'"' + ';\n';
-		argstr += 'img'+nobj+',';
-		nobj++;
+		this.outputimages += 'window.'+this.fn+'.imgs['+this.nimages+'] = new Image ();\nwindow.'+this.fn+'.imgs['+this.nimages+'].src="' + this.slashify (data) +'"' + ';\n';
+		argstr += 'window.'+this.fn+'.imgs['+this.nimages+'],';
+		this.nimages++;
 	    } else {
 		console.log (fn+": don't know how to handle "+(typeof (arg))+" "+arg.tagName);
 		return this.canvas.real2dContext [fn].apply (this.canvas.real2dContext, args);
@@ -251,6 +267,8 @@ jsContext2d.prototype.emitFunc = function (fn, args) {
     }
     if (beforestr.length)
 	this.output += beforestr;
+    if (fnprefix)
+	this.output += fnprefix;
     this.output += 'ctx.'+fn + '(';
     if (argstr.length)
 	this.output += argstr.substr (0, argstr.length-1);
@@ -284,7 +302,6 @@ jsContext2d.prototype.save = function () {
 jsContext2d.prototype.restore = function () {    
     this.emitFunc ('restore', arguments);
     this.popFields ();
-    //this.fieldsInvalid = true;
 };
 jsContext2d.prototype.beginPath = function () {
     return this.emitFunc ('beginPath', arguments);
@@ -310,15 +327,42 @@ jsContext2d.prototype.bezierCurveTo = function () {
 jsContext2d.prototype.arc = function () {
     return this.emitFunc ('arc', arguments);
 };
-jsContext2d.prototype.createPattern = function () {		// XXX: problematic arg1 is element (img/canvas)   
-    return this.emitFunc ('createPattern', arguments);		
+jsContext2d.prototype.createPattern = function () {	
+    var g = this.emitFunc ('createPattern', arguments,'this.gradients ['+this.ngradients+'] = ');
+    g.jscGradient = ++this.ngradients;
+    return g;
 };
 jsContext2d.prototype.createLinearGradient = function () {
-    return this.emitFunc ('createLinearGradient', arguments);
+    this.output += 'this.gradients ['+this.ngradients+'] = ';
+    var n = this.ngradients;
+    var g = this.emitFunc ('createLinearGradient', arguments);
+    var oldadd = g.addColorStop;
+    var state = this;
+    // override the colorstop function
+    g.addColorStop = function (stop, color) {
+	state.output += sprintf ('this.gradients [%d].addColorStop (%f, "%s");\n',
+				 n, stop, color);
+	// execute in parent
+	oldadd.apply (g, arguments);
+    };
+    g.jscGradient = ++this.ngradients;
+    return g;
 };
 jsContext2d.prototype.createRadialGradient = function () {
-    return this.emitFunc ('createRadialGradient', arguments);
+    this.output += 'this.gradients ['+this.ngradients+'] = ';
+    var n = this.ngradients;
+    var g = this.emitFunc ('createRadialGradient', arguments);
+    var oldadd = g.addColorStop;
+    var state = this;
+    g.addColorStop = function (stop, color) {
+	state.output += sprintf ('this.gradients [%d].addColorStop (%f, "%s");\n',
+				 n, stop, color);
+	oldadd.apply (g, arguments);
+    };
+    g.jscGradient = ++this.ngradients;
+    return g;
 };
+
 jsContext2d.prototype.fillText = function () {
     return this.emitFunc ('fillText', arguments);
 };
